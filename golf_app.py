@@ -6,7 +6,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 
-# --- 1. デザイン設定 (視認性重視のプロ仕様) ---
+# --- 1. デザイン設定 ---
 st.set_page_config(page_title="Golf Battle Tracker", page_icon="⛳️", layout="wide")
 st.markdown("""
     <style>
@@ -39,7 +39,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data_safe(sheet_name, default_cols):
     try:
-        # 1分間のキャッシュを持たせ、Read APIの制限(429)を回避
+        # API制限回避のためキャッシュを1分保持
         df = conn.read(worksheet=sheet_name, ttl="1m")
         if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
@@ -47,7 +47,6 @@ def load_data_safe(sheet_name, default_cols):
     except Exception as e:
         if "429" in str(e):
             st.warning("Google APIの制限中です。1分ほど待ってから操作してください。")
-        pass
     return pd.DataFrame(columns=default_cols)
 
 def safe_save(df, sheet_name):
@@ -72,13 +71,12 @@ h_df['日付DT'] = pd.to_datetime(h_df['日付'], errors='coerce')
 valid_h = h_df.dropna(subset=['日付DT'])
 available_years = sorted(valid_h['日付DT'].dt.year.unique().astype(int), reverse=True)
 if current_year not in available_years: available_years = [current_year] + available_years
-
 selected_year = st.selectbox("📅 年度別成績を集計", options=available_years, index=0)
 
 # 友達リスト表示
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 if friend_names:
-    h_selected = h_df[pd.to_datetime(h_df['日付'], errors='coerce').dt.year == selected_year]
+    h_selected = h_df[h_df['日付DT'].dt.year == selected_year]
     cols = st.columns(len(friend_names))
     for i, name in enumerate(friend_names):
         with cols[i]:
@@ -90,7 +88,7 @@ if friend_names:
             else: st.write("📷 No Photo")
             st.metric(label=f"{name} ({selected_year}年)", value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
 
-# --- 4. ラウンド結果の入力フォーム ---
+# --- 4. ラウンド結果の入力フォーム (HC自動変動ロジック追加) ---
 st.divider()
 with st.container():
     st.subheader("📝 ラウンド結果を記録する")
@@ -100,7 +98,6 @@ with st.container():
             in_date = st.date_input("日付", date.today())
             c_df['Disp'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
             in_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Disp'].tolist()))
-        # --- 修正箇所：SyntaxErrorを解消 ---
         with col_m2:
             in_opps = st.multiselect("対戦相手", options=friend_names)
             in_my_score = st.number_input("自分のスコア (Gross)", 60, 150, 90)
@@ -118,18 +115,36 @@ with st.container():
         if st.button("🚀 対戦結果を保存する"):
             if in_course != "-- 選択 --" and match_results:
                 new_entries = []
+                updated_f_df = f_df.copy() # 友達データを更新用にコピー
+                
                 for r in match_results:
+                    # 履歴用データ作成
                     new_entries.append({
                         "日付": in_date.strftime('%Y-%m-%d'), "ゴルフ場": in_course, 
                         "対戦相手": r["対戦相手"], "自分のスコア": in_my_score, 
                         "相手のスコア": r["相手のスコア"], "勝敗": r["勝敗"], "ハンディ適用": r["ハンディ適用"]
                     })
-                # 保存時に一時的な列を削除して整合性を保つ
-                if safe_save(pd.concat([h_df.drop(columns=['日付DT'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history"):
-                    st.success("保存完了！")
+                    
+                    # 【重要】ハンディキャップの自動変動ロジック
+                    if r["ハンディ適用"] == "あり":
+                        current_hc = pd.to_numeric(updated_f_df.loc[updated_f_df['名前'] == r["対戦相手"], '持ちハンディ']).iloc[0]
+                        if r["勝敗"] == "勝ち": # ユーザー勝利＝相手が負けなので、相手のHCを1増やす（甘くする）
+                            new_hc = current_hc + 1.0
+                        elif r["勝敗"] == "負け": # ユーザー敗北＝相手が勝ちなので、相手のHCを1減らす（厳しくする）
+                            new_hc = max(0.0, current_hc - 1.0)
+                        else:
+                            new_hc = current_hc
+                        updated_f_df.loc[updated_f_df['名前'] == r["対戦相手"], '持ちハンディ'] = new_hc
+                
+                # 履歴(history)と友達(friends)の両方を保存
+                success_h = safe_save(pd.concat([h_df.drop(columns=['日付DT'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history")
+                success_f = safe_save(updated_f_df, "friends")
+                
+                if success_h and success_f:
+                    st.success("保存とハンディキャップの更新が完了しました！")
                     st.rerun()
 
-# --- 5. 対戦履歴のタイムライン表示 (スタイリッシュ版) ---
+# --- 5. 対戦履歴のタイムライン表示 ---
 st.divider()
 st.subheader("📊 対戦履歴の確認")
 if not h_df.empty:
@@ -150,7 +165,7 @@ if not h_df.empty:
             </div>
             """, unsafe_allow_html=True)
     
-    with st.expander("表形式で管理（全履歴の修正・削除）"):
+    with st.expander("表形式で管理"):
         edited = st.data_editor(v_df.drop(columns=['日付DT'], errors='ignore'), use_container_width=True, num_rows="dynamic")
         if st.button("履歴の修正を反映"):
             if safe_save(edited, "history"):
