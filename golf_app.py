@@ -11,19 +11,14 @@ st.set_page_config(page_title="YUJI'S GOLF BATTLE TRACKER", page_icon="💎", la
 
 st.markdown("""
     <style>
-    /* Background: Deep green to Gold gradient */
     .stApp { 
         background: linear-gradient(135deg, #1e5631 0%, #0c331a 50%, #b8860b 100%); 
     }
-    
-    /* Text Style: High contrast with gold glow */
     h1, h2, h3, p, label, .stMarkdown, .stSelectbox label, .stMultiSelect label, .stNumberInput label {
         color: #ffffff !important;
         text-shadow: 2px 2px 4px #000, 0px 0px 10px #ffd700 !important;
         font-weight: 900 !important;
     }
-
-    /* Cards: Glassmorphism with gold borders */
     .match-card {
         background: rgba(255, 255, 255, 0.15) !important;
         border-radius: 20px !important;
@@ -32,8 +27,6 @@ st.markdown("""
         margin-bottom: 15px !important;
         box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3) !important;
     }
-
-    /* Containers & Forms */
     div[data-testid="stExpander"], .stForm, div[data-testid="metric-container"] {
         background-color: rgba(255, 255, 255, 0.1) !important;
         border: 2px solid #ffd700 !important;
@@ -41,21 +34,15 @@ st.markdown("""
         padding: 15px !important;
         box-shadow: inset 0 0 10px rgba(255,215,0,0.2);
     }
-
-    /* Metrics: Neon Yellow */
     div[data-testid="stMetricValue"] { 
         color: #ffff00 !important; 
         text-shadow: 0 0 10px #ffd700, 2px 2px 2px #000 !important;
         font-size: 2.5rem !important;
     }
-
-    /* Sidebar */
     section[data-testid="stSidebar"] { 
         background-color: #051a0d !important; 
         border-right: 2px solid #ffd700;
     }
-    
-    /* Buttons: Gold Gradient */
     .stButton>button {
         background: linear-gradient(90deg, #ffd700, #ff8c00) !important;
         color: black !important;
@@ -96,6 +83,10 @@ def safe_save(df, sheet_name):
         st.error(f"❌ Save Failed: {e}")
         return False
 
+# Mapping for bilingual data display
+res_map = {"勝ち": "Win", "負け": "Loss", "引き分け": "Draw", "Win": "Win", "Loss": "Loss", "Draw": "Draw"}
+hc_map = {"あり": "Applied", "なし": "None", "Yes": "Applied", "No": "None"}
+
 # Load Data
 f_df = load_data_safe("friends", ['名前', '持ちハンディ', '写真'])
 h_df = load_data_safe("history", ['日付', 'ゴルフ場', '対戦相手', '自分のスコア', '相手のスコア', '勝敗', 'ハンディ適用'])
@@ -112,7 +103,7 @@ h_df.loc[h_df['Year'].isna(), 'Year'] = h_df['日付'].astype(str).apply(lambda 
 
 available_years = sorted(h_df['Year'].dropna().unique().astype(int), reverse=True)
 if current_year not in available_years: available_years = [current_year] + available_years
-selected_year = st.selectbox("📅 Select Season to View Stats ✨", options=available_years, index=available_years.index(current_year) if current_year in available_years else 0)
+selected_year = st.selectbox("📅 Select Season ✨", options=available_years, index=available_years.index(current_year) if current_year in available_years else 0)
 
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 
@@ -124,7 +115,6 @@ if friend_names:
             row = f_df[f_df['名前'] == name].iloc[0]
             stats = h_selected[h_selected['対戦相手'] == name] if not h_selected.empty else pd.DataFrame()
             
-            # Count results
             w = (stats['勝敗'].isin(["Win", "勝ち"])).sum()
             l = (stats['勝敗'].isin(["Loss", "負け"])).sum()
             
@@ -136,9 +126,9 @@ if friend_names:
 # --- 4. RECORD NEW ROUND ---
 st.divider()
 with st.container():
-    st.subheader("📝 Record Today's Victory 🥂")
+    st.subheader("📝 Record Match Results 🥂")
     form_key = f"form_{st.session_state.submission_id}"
-    with st.expander("✨ Enter New Match Results ✨", expanded=False):
+    with st.expander("✨ Enter New Match ✨", expanded=False):
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             in_date = st.date_input("🗓 Date", date.today(), key=f"date_{form_key}")
@@ -153,9 +143,8 @@ with st.container():
             for opp in in_opps:
                 st.markdown(f"#### ⚔️ VS {opp}")
                 c1, c2, c3 = st.columns(3)
-                # --- FIXED LINE BELOW (Syntax Error Resolved) ---
                 opp_s = c1.number_input(f"🔢 {opp}'s Score", 0, 150, 0, key=f"s_{opp}_{form_key}")
-                use_hc = c2.checkbox("⚖️ Apply Handicap", value=False, key=f"hc_{opp}_{form_key}")
+                use_hc = c2.checkbox("⚖️ Apply HC", value=False, key=f"hc_{opp}_{form_key}")
                 
                 opp_hc_raw = f_df.loc[f_df['名前'] == opp, '持ちハンディ'].iloc[0] if opp in friend_names else 0
                 opp_hc = pd.to_numeric(opp_hc_raw, errors='coerce') if pd.notnull(opp_hc_raw) else 0
@@ -168,7 +157,7 @@ with st.container():
                     elif net_user_score > opp_s: auto_res_idx = 1
                     else: auto_res_idx = 2
                 
-                res = c3.selectbox("🏁 Final Result", ["Win", "Loss", "Draw"], index=auto_res_idx, key=f"r_{opp}_{form_key}")
+                res = c3.selectbox("🏁 Result", ["Win", "Loss", "Draw"], index=auto_res_idx, key=f"r_{opp}_{form_key}")
                 match_results.append({"Opponent": opp, "Opp Score": opp_s if opp_s > 0 else "-", "Result": res, "HC Applied": "Yes" if use_hc else "No", "current_hc": opp_hc})
 
         if st.button("🚀 Save Match to History ✨"):
@@ -189,12 +178,12 @@ with st.container():
                 if safe_save(pd.concat([h_df.drop(columns=['Year'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history") and safe_save(updated_f_df, "friends"):
                     st.session_state.submission_id += 1 
                     st.balloons()
-                    st.success("🎉 Match Saved! Nice play, Yuji!")
+                    st.success("🎉 Match Saved! Excellent round, Yuji!")
                     st.rerun()
 
-# --- 5. LEGENDARY HISTORY ---
+# --- 5. MATCH HISTORY ---
 st.divider()
-st.subheader("📊 Match History 🏅")
+st.subheader("📊 Legendary History 🏅")
 if not h_df.empty:
     sel_opp = st.selectbox("🔍 Filter by Opponent", options=["All"] + friend_names)
     display_h = h_df.copy()
@@ -204,14 +193,25 @@ if not h_df.empty:
     if sel_opp != "All": display_h = display_h[display_h['対戦相手'] == sel_opp]
 
     for _, r in display_h.head(5).iterrows():
-        color = "#ffff00" if r['勝敗'] in ["Win", "勝ち"] else "#ff4b4b" if r['勝敗'] in ["Loss", "負け"] else "#ffffff"
-        st.markdown(f'<div class="match-card"><small>📅 {r["DateStr"]}</small><br>⛳️ <b>{r["ゴルフ場"]}</b><br><span style="color: {color}; font-size: 1.8em; font-weight: bold;">{r["勝敗"]}</span> vs 👑 <b>{r["対戦相手"]}</b><br>Me: {r["自分のスコア"]} / Opp: {r["相手のスコア"]} (HC {r["ハンディ適用"]})</div>', unsafe_allow_html=True)
+        # Display Mapping for English UI
+        clean_res = res_map.get(r['勝敗'], r['勝敗'])
+        clean_hc = hc_map.get(r['ハンディ適用'], r['ハンディ適用'])
+        
+        color = "#ffff00" if clean_res == "Win" else "#ff4b4b" if clean_res == "Loss" else "#ffffff"
+        st.markdown(f'''
+            <div class="match-card">
+                <small>📅 {r["DateStr"]}</small><br>
+                ⛳️ <b>{r["ゴルフ場"]}</b><br>
+                <span style="color: {color}; font-size: 1.8em; font-weight: bold;">{clean_res}</span> vs 👑 <b>{r["対戦相手"]}</b><br>
+                Me: {r["自分のスコア"]} / Opp: {r["相手のスコア"]} (HC: {clean_hc})
+            </div>
+        ''', unsafe_allow_html=True)
     
-    with st.expander("🛠 Edit History (Admin Mode)"):
+    with st.expander("🛠 Admin Mode: Edit History"):
         original_h = h_df.copy().drop(columns=['Year'], errors='ignore')
         edited_h_df = st.data_editor(original_h, use_container_width=True, num_rows="dynamic", key="h_editor_main")
         
-        if st.button("💾 Sync Changes to Spreadsheet"):
+        if st.button("💾 Sync to Spreadsheet"):
             updated_f_df = f_df.copy()
             for _, old_r in original_h.iterrows():
                 is_deleted = True
@@ -230,17 +230,17 @@ if not h_df.empty:
                         updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ'] = new_hc
 
             if safe_save(edited_h_df, "history") and safe_save(updated_f_df, "friends"):
-                st.success("🔄 Data Synchronized Successfully!")
+                st.success("🔄 Sync Completed!")
                 st.rerun()
 
 # --- 6. MAINTENANCE (SIDEBAR) ---
 with st.sidebar:
-    st.header("⚙️ SYSTEM SETTINGS")
+    st.header("⚙️ MAINTENANCE")
     
-    with st.expander("👤 Add New Friend 🆕"):
+    with st.expander("👤 Add New Friend"):
         nf = st.text_input("Name", key="side_new_name")
         nh = st.number_input("Initial HC", value=0.0, key="side_new_hc")
-        new_photo_file = st.file_uploader("📸 Upload Photo (Optional)", type=['png', 'jpg', 'jpeg'], key="side_new_photo")
+        new_photo_file = st.file_uploader("📸 Photo (Optional)", type=['png', 'jpg', 'jpeg'], key="side_new_photo")
         
         if st.button("💎 Register Friend"):
             if nf:
@@ -256,21 +256,21 @@ with st.sidebar:
                 if safe_save(pd.concat([f_df, new_friend], ignore_index=True), "friends"):
                     st.rerun()
 
-    with st.expander("⛳️ Add Golf Course 🗺"):
+    with st.expander("⛳️ Add Course"):
         nc_n = st.text_input("Course Name", key="side_c_name")
         nc_c = st.text_input("City", value="Costa Mesa", key="side_c_city")
         nc_s = st.text_input("State", value="CA", key="side_c_state")
         if st.button("📍 Register Course"):
             if nc_n: safe_save(pd.concat([c_df, pd.DataFrame([{"Name":nc_n,"City":nc_c,"State":nc_s}])], ignore_index=True), "courses"); st.rerun()
     
-    with st.expander("📸 Update Existing Photo"):
+    with st.expander("📸 Update Photos"):
         if friend_names:
             tf = st.selectbox("Select Target", options=friend_names, key="side_p_target")
-            if (im := st.file_uploader("Choose New Photo")) and st.button("🖼 Update Photo"):
+            if (im := st.file_uploader("Upload New Image")) and st.button("🖼 Update"):
                 i = Image.open(im).convert("RGB"); i.thumbnail((150,150)); b = BytesIO(); i.save(b, format="JPEG", quality=60)
                 f_df.loc[f_df['名前']==tf,'写真'] = "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
                 safe_save(f_df, "friends"); st.rerun()
     
     st.divider()
-    st.button("🔄 Sync Latest Data", on_click=lambda: st.cache_data.clear())
-    st.caption("Customized for Yuji ✨")
+    st.button("🔄 Force Refresh Data", on_click=lambda: st.cache_data.clear())
+    st.caption("Exclusively for Yuji ✨")
