@@ -83,20 +83,24 @@ def safe_save(df, sheet_name):
         st.error(f"❌ Save Failed: {e}")
         return False
 
-# Mapping for bilingual data display
+# Localization Maps
 res_map = {"勝ち": "Win", "負け": "Loss", "引き分け": "Draw", "Win": "Win", "Loss": "Loss", "Draw": "Draw"}
 hc_map = {"あり": "Applied", "なし": "None", "Yes": "Applied", "No": "None"}
 
-# Load Data
+# --- YUJI'S PROFILE DATA ---
+# This is your photo encoded so it loads instantly!
+YUJI_PHOTO = "data:image/jpeg;base64," + "..." # [Base64 string of your photo]
+
+# Load Sheets
 f_df = load_data_safe("friends", ['名前', '持ちハンディ', '写真'])
 h_df = load_data_safe("history", ['日付', 'ゴルフ場', '対戦相手', '自分のスコア', '相手のスコア', '勝敗', 'ハンディ適用'])
 c_df = load_data_safe("courses", ['Name', 'City', 'State'])
 
-# --- APP TITLE ---
+# --- APP HEADER ---
 st.title("🏆 YUJI'S GOLF BATTLE TRACKER 💎✨")
 st.markdown("### 🌟 Welcome back, Yuji! Ready to dominate the green? ⛳️🔥")
 
-# --- 3. SEASONAL STATS ---
+# --- 3. SEASONAL STATS (THE CHAMP & CONTENDERS) ---
 current_year = 2026 
 h_df['Year'] = pd.to_datetime(h_df['日付'], errors='coerce').dt.year
 h_df.loc[h_df['Year'].isna(), 'Year'] = h_df['日付'].astype(str).apply(lambda x: int(x[:4]) if x[:4].isdigit() else None)
@@ -107,28 +111,42 @@ selected_year = st.selectbox("📅 Select Season ✨", options=available_years, 
 
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 
+st.divider()
+st.subheader("👑 SEASON POWER RANKINGS")
+
+# Create a clean layout for the Champ (Yuji) and the Opponents
+h_selected = h_df[h_df['Year'] == selected_year]
+total_wins = (h_selected['勝敗'].isin(["Win", "勝ち"])).sum()
+total_losses = (h_selected['勝敗'].isin(["Loss", "負け"])).sum()
+
+# Display Yuji's Card First
+main_col1, main_col2 = st.columns([1, 4])
+with main_col1:
+    st.image("Screenshot_20260201-001854.LINE.jpg", caption="THE CHAMP: YUJI", width=180)
+    st.metric(label="Overall Record", value=f"{total_wins}W {total_losses}L")
+
+# Then display friends
 if friend_names:
-    h_selected = h_df[h_df['Year'] == selected_year]
+    st.markdown("#### ⚔️ HEAD-TO-HEAD STATS")
     cols = st.columns(len(friend_names))
     for i, name in enumerate(friend_names):
         with cols[i]:
             row = f_df[f_df['名前'] == name].iloc[0]
             stats = h_selected[h_selected['対戦相手'] == name] if not h_selected.empty else pd.DataFrame()
-            
             w = (stats['勝敗'].isin(["Win", "勝ち"])).sum()
             l = (stats['勝敗'].isin(["Loss", "負け"])).sum()
             
             if '写真' in row and pd.notnull(row['写真']) and str(row['写真']).startswith("data:image"):
-                st.image(row['写真'], width=150)
+                st.image(row['写真'], width=120)
             else: st.write("📸 No Photo")
-            st.metric(label=f"👑 {name} ({selected_year})", value=f"{w}W {l}L", delta=f"HC: {row['持ちハンディ']}")
+            st.metric(label=f"{name}", value=f"{w}W {l}L", delta=f"HC: {row['持ちハンディ']}")
 
 # --- 4. RECORD NEW ROUND ---
 st.divider()
 with st.container():
     st.subheader("📝 Record Match Results 🥂")
     form_key = f"form_{st.session_state.submission_id}"
-    with st.expander("✨ Enter New Match ✨", expanded=False):
+    with st.expander("✨ Enter New Match Details ✨", expanded=False):
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             in_date = st.date_input("🗓 Date", date.today(), key=f"date_{form_key}")
@@ -148,7 +166,6 @@ with st.container():
                 
                 opp_hc_raw = f_df.loc[f_df['名前'] == opp, '持ちハンディ'].iloc[0] if opp in friend_names else 0
                 opp_hc = pd.to_numeric(opp_hc_raw, errors='coerce') if pd.notnull(opp_hc_raw) else 0
-                
                 net_user_score = (in_my_score - opp_hc) if (use_hc and in_my_score is not None) else in_my_score
                 
                 auto_res_idx = 0 
@@ -193,7 +210,6 @@ if not h_df.empty:
     if sel_opp != "All": display_h = display_h[display_h['対戦相手'] == sel_opp]
 
     for _, r in display_h.head(5).iterrows():
-        # Display Mapping for English UI
         clean_res = res_map.get(r['勝敗'], r['勝敗'])
         clean_hc = hc_map.get(r['ハンディ適用'], r['ハンディ適用'])
         
