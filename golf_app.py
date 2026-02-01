@@ -34,23 +34,27 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. データ連携 ---
+# --- 2. データ連携 (Quota 429エラー対策) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data_safe(sheet_name, default_cols):
     try:
-        df = conn.read(worksheet=sheet_name, ttl="0s")
+        # 【修正】ttlを"0s"から"1m"に変更。
+        # 操作のたびにAPIを叩くのを防ぎ、Quota Exceededエラーを回避します。
+        df = conn.read(worksheet=sheet_name, ttl="1m")
         if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
             return df.dropna(how='all')
-    except:
+    except Exception as e:
+        if "429" in str(e):
+            st.warning("Google APIの制限中です。1分ほど待ってから操作してください。")
         pass
     return pd.DataFrame(columns=default_cols)
 
 def safe_save(df, sheet_name):
     try:
         conn.update(worksheet=sheet_name, data=df)
-        st.cache_data.clear()
+        st.cache_data.clear() # 保存後はキャッシュを消して最新状態にする
         return True
     except Exception as e:
         st.error(f"保存失敗: {e}")
@@ -75,12 +79,12 @@ selected_year = st.selectbox("📅 年度別成績を集計", options=available_
 # 友達リスト表示
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 if friend_names:
-    h_selected = h_df[h_df['日付DT'].dt.year == selected_year]
+    h_selected = h_df[pd.to_datetime(h_df['日付'], errors='coerce').dt.year == selected_year]
     cols = st.columns(len(friend_names))
     for i, name in enumerate(friend_names):
         with cols[i]:
             row = f_df[f_df['名前'] == name].iloc[0]
-            stats = h_selected[h_selected['対戦相手'] == name]
+            stats = h_selected[h_selected['対戦相手'] == name] if not h_selected.empty else pd.DataFrame()
             w, l = (stats['勝敗']=="勝ち").sum(), (stats['勝敗']=="負け").sum()
             if '写真' in row and pd.notnull(row['写真']) and str(row['写真']).startswith("data:image"):
                 st.image(row['写真'], width=120)
@@ -97,7 +101,7 @@ with st.container():
             in_date = st.date_input("日付", date.today())
             c_df['Disp'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
             in_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Disp'].tolist()))
-        with col_m2:
+        with col2_m2 := col2: # 誤字修正
             in_opps = st.multiselect("対戦相手", options=friend_names)
             in_my_score = st.number_input("自分のスコア (Gross)", 60, 150, 90)
 
@@ -152,20 +156,16 @@ if not h_df.empty:
                 st.success("更新しました！")
                 st.rerun()
 
-# --- 6. システムメンテナンス (友達追加・コース追加・写真) ---
+# --- 6. システムメンテナンス ---
 with st.sidebar:
     st.header("⚙️ システムメンテナンス")
-    
-    # 【NEW】友達を追加
     with st.expander("👤 友達を新規追加", expanded=False):
-        new_f_name = st.text_input("名前 (例: 田中さん)")
+        new_f_name = st.text_input("名前")
         new_f_hc = st.number_input("ハンディキャップ", value=0.0)
         if st.button("友達を保存"):
             if new_f_name:
-                new_f_row = pd.DataFrame([{"名前": new_f_name, "持ちハンディ": new_f_hc, "写真": ""}])
-                if safe_save(pd.concat([f_df, new_f_row], ignore_index=True), "friends"):
-                    st.success(f"{new_f_name}さんを追加しました！")
-                    st.rerun()
+                safe_save(pd.concat([f_df, pd.DataFrame([{"名前": new_f_name, "持ちハンディ": new_f_hc, "写真": ""}])], ignore_index=True), "friends")
+                st.rerun()
 
     with st.expander("⛳️ 新しいコースを追加", expanded=False):
         nc_name = st.text_input("コース名")
