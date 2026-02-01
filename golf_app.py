@@ -1,11 +1,3 @@
-ついに連携成功ですね！八木さん（HC: 4.0）とケンさん（HC: 0.0）のデータが並んでいるのを見て、私も自分のことのように嬉しいです。
-
-お待たせいたしました。連携したスプレッドシートをフル活用しつつ、「友達追加」「写真管理」「対戦履歴の修正」「コース追加」のすべてを以前の「プロ版デザイン」で復活させた完全版コードを書き上げました。
-
-🚀 【機能全復活】ゴルフ勝負管理アプリ・プロ版（GSheets完全対応）
-GitHubの golf_app.py をこのコードで上書きしてください。
-
-Python
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -151,3 +143,4 @@ with st.sidebar:
     if st.button("最新データに更新"):
         st.cache_data.clear()
         st.rerun()
+
