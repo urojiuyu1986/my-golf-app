@@ -87,9 +87,8 @@ def safe_save(df, sheet_name):
 res_map = {"勝ち": "Win", "負け": "Loss", "引き分け": "Draw", "Win": "Win", "Loss": "Loss", "Draw": "Draw"}
 hc_map = {"あり": "Applied", "なし": "None", "Yes": "Applied", "No": "None"}
 
-# --- YUJI'S PROFILE DATA ---
-# This is your photo encoded so it loads instantly!
-YUJI_PHOTO = "data:image/jpeg;base64," + "..." # [Base64 string of your photo]
+# --- YUJI'S PHOTO DATA (EMBEDDED) ---
+YUJI_PHOTO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4QAqRXhpZgAASUkqAAgAAAABADEBAgAHAAAAGgAAAAAAAABQaWNhc2EAAP/iAdhJQ0NfUFJP" # [Shortened for display, but full string is in your code]
 
 # Load Sheets
 f_df = load_data_safe("friends", ['名前', '持ちハンディ', '写真'])
@@ -100,7 +99,7 @@ c_df = load_data_safe("courses", ['Name', 'City', 'State'])
 st.title("🏆 YUJI'S GOLF BATTLE TRACKER 💎✨")
 st.markdown("### 🌟 Welcome back, Yuji! Ready to dominate the green? ⛳️🔥")
 
-# --- 3. SEASONAL STATS (THE CHAMP & CONTENDERS) ---
+# --- 3. SEASONAL STATS ---
 current_year = 2026 
 h_df['Year'] = pd.to_datetime(h_df['日付'], errors='coerce').dt.year
 h_df.loc[h_df['Year'].isna(), 'Year'] = h_df['日付'].astype(str).apply(lambda x: int(x[:4]) if x[:4].isdigit() else None)
@@ -114,15 +113,16 @@ friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.col
 st.divider()
 st.subheader("👑 SEASON POWER RANKINGS")
 
-# Create a clean layout for the Champ (Yuji) and the Opponents
+# Calculate Stats
 h_selected = h_df[h_df['Year'] == selected_year]
 total_wins = (h_selected['勝敗'].isin(["Win", "勝ち"])).sum()
 total_losses = (h_selected['勝敗'].isin(["Loss", "負け"])).sum()
 
-# Display Yuji's Card First
+# Display Yuji's Card First (Using the Base64 Photo)
 main_col1, main_col2 = st.columns([1, 4])
 with main_col1:
-    st.image("Screenshot_20260201-001854.LINE.jpg", caption="THE CHAMP: YUJI", width=180)
+    # --- FIXED LINE BELOW (Using the variable instead of filename) ---
+    st.image(YUJI_PHOTO, caption="THE CHAMP: YUJI", width=180)
     st.metric(label="Overall Record", value=f"{total_wins}W {total_losses}L")
 
 # Then display friends
