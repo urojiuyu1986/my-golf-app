@@ -84,10 +84,10 @@ f_df = load_data_safe("friends", ['名前', '持ちハンディ', '写真'])
 h_df = load_data_safe("history", ['日付', 'ゴルフ場', '対戦相手', '自分のスコア', '相手のスコア', '勝敗', 'ハンディ適用'])
 c_df = load_data_safe("courses", ['Name', 'City', 'State'])
 
-# --- 3. HERO SECTION (YUJI'S PHOTO) ---
+# --- 3. HERO SECTION (YUJI'S PROFILE) ---
 st.title("🏆 YUJI'S GOLF BATTLE TRACKER 💎✨")
 
-# Check if Yuji exists in the friends list to show his photo
+# Search for Yuji in friends list
 yuji_row = f_df[f_df['名前'].str.contains("Yuji|ユウジ", case=False, na=False)]
 col_h1, col_h2 = st.columns([1, 4])
 
@@ -99,7 +99,6 @@ with col_h1:
 
 with col_h2:
     st.markdown(f"### 🌟 Welcome back, Yuji! Ready to dominate the green? ⛳️🔥")
-    # Overall Season Stats
     current_year = 2026
     h_df['Year'] = pd.to_datetime(h_df['日付'], errors='coerce').dt.year
     h_selected = h_df[h_df['Year'] == current_year]
@@ -111,7 +110,7 @@ with col_h2:
 st.divider()
 available_years = sorted(h_df['Year'].dropna().unique().astype(int), reverse=True)
 if current_year not in available_years: available_years = [current_year] + available_years
-selected_year = st.selectbox("📅 Select Season to View Head-to-Head ✨", options=available_years, index=available_years.index(current_year) if current_year in available_years else 0)
+selected_year = st.selectbox("📅 Select Season ✨", options=available_years, index=available_years.index(current_year) if current_year in available_years else 0)
 
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 friend_names_without_yuji = [n for n in friend_names if "Yuji" not in n]
@@ -136,10 +135,11 @@ st.divider()
 with st.container():
     st.subheader("📝 Record Match Results 🥂")
     form_key = f"form_{st.session_state.submission_id}"
-    with st.expander("✨ Enter New Match Details ✨", expanded=False):
+    with st.expander("✨ Enter New Match ✨", expanded=False):
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             in_date = st.date_input("🗓 Date", date.today(), key=f"date_{form_key}")
+            # Dynamic course display
             c_df['Disp'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
             in_course = st.selectbox("⛳️ Select Course", options=["-- Select --"] + sorted(c_df['Disp'].tolist()), key=f"course_{form_key}")
         with col_m2:
@@ -188,7 +188,7 @@ with st.container():
                     st.success("🎉 Match Saved! Excellent round, Yuji!")
                     st.rerun()
 
-# --- 6. MATCH HISTORY & ADMIN EDIT (HC SYNC RESTORED) ---
+# --- 6. MATCH HISTORY & ADMIN EDIT ---
 st.divider()
 st.subheader("📊 Legendary History 🏅")
 if not h_df.empty:
@@ -205,12 +205,12 @@ if not h_df.empty:
         color = "#ffff00" if clean_res == "Win" else "#ff4b4b" if clean_res == "Loss" else "#ffffff"
         st.markdown(f'<div class="match-card"><small>📅 {r["DateStr"]}</small><br>⛳️ <b>{r["ゴルフ場"]}</b><br><span style="color: {color}; font-size: 1.8em; font-weight: bold;">{clean_res}</span> vs 👑 <b>{r["対戦相手"]}</b><br>Me: {r["自分のスコア"]} / Opp: {r["相手のスコア"]} (HC: {clean_hc})</div>', unsafe_allow_html=True)
     
-    with st.expander("🛠 Admin Mode: Edit History (HC Sync Enabled)"):
-        st.warning("Editing or deleting here will automatically recalculate the opponent's Handicap.")
+    with st.expander("🛠 Admin Mode: Edit History (Handicap Sync Enabled)"):
+        st.warning("Deletions here will automatically restore the opponent's Handicap.")
         original_h = h_df.copy().drop(columns=['Year'], errors='ignore')
         edited_h_df = st.data_editor(original_h, use_container_width=True, num_rows="dynamic", key="h_editor_main")
         
-        if st.button("💾 Sync to Spreadsheet"):
+        if st.button("💾 Sync Changes"):
             updated_f_df = f_df.copy()
             for _, old_r in original_h.iterrows():
                 is_deleted = True
@@ -219,46 +219,46 @@ if not h_df.empty:
                         is_deleted = False
                         break
                 
-                if is_deleted and old_r['ハンディ適用'] in ["Yes", "あり", "Applied"]:
+                if is_deleted and old_r['ハンディ適用'] in ["Yes", "Applied"]:
                     opp_name = old_r['対戦相手']
                     if opp_name in updated_f_df['名前'].values:
                         curr_hc = pd.to_numeric(updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ']).iloc[0]
-                        if old_r['勝敗'] in ["Win", "勝ち"]: new_hc = curr_hc + 2.0
-                        elif old_r['勝敗'] in ["Loss", "負け"]: new_hc = max(0.0, curr_hc - 2.0)
+                        if old_r['勝敗'] in ["Win"]: new_hc = curr_hc + 2.0
+                        elif old_r['勝敗'] in ["Loss"]: new_hc = max(0.0, curr_hc - 2.0)
                         else: new_hc = curr_hc
                         updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ'] = new_hc
 
             if safe_save(edited_h_df, "history") and safe_save(updated_f_df, "friends"):
-                st.success("🔄 Sync Completed! Handicap updated.")
+                st.success("🔄 Sync Completed!")
                 st.rerun()
 
 # --- 7. MAINTENANCE (SIDEBAR) ---
 with st.sidebar:
     st.header("⚙️ MAINTENANCE")
     
-    with st.expander("👤 Add/Update Yuji or Friends"):
-        nf = st.text_input("Name (Use 'Yuji' for your profile)", key="side_new_name")
-        nh = st.number_input("Handicap", value=0.0, key="side_new_hc")
-        new_photo_file = st.file_uploader("📸 Upload Photo", type=['png', 'jpg', 'jpeg'], key="side_new_photo")
-        
-        if st.button("💎 Save Person"):
-            if nf:
-                photo_b64 = ""
-                if new_photo_file:
-                    img = Image.open(new_photo_file).convert("RGB")
-                    img.thumbnail((200,200))
-                    buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=75)
-                    photo_b64 = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
-                
-                # Update existing or add new
-                if nf in f_df['名前'].values:
-                    f_df.loc[f_df['名前'] == nf, '持ちハンディ'] = nh
-                    if photo_b64: f_df.loc[f_df['名前'] == nf, '写真'] = photo_b64
+    # Restored: Specialized photo update for existing friends
+    with st.expander("📸 Update Friend Photo"):
+        if friend_names:
+            target_friend = st.selectbox("Select Friend", options=friend_names, key="side_p_target")
+            new_img = st.file_uploader("Upload New Image", type=['png', 'jpg', 'jpeg'], key="side_p_upload")
+            if st.button("🖼 Refresh Photo"):
+                if new_img:
+                    i = Image.open(new_img).convert("RGB")
+                    i.thumbnail((200,200))
+                    b = BytesIO()
+                    i.save(b, format="JPEG", quality=75)
+                    photo_data = "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
+                    f_df.loc[f_df['名前'] == target_friend, '写真'] = photo_data
                     safe_save(f_df, "friends")
-                else:
-                    new_friend = pd.DataFrame([{"名前": nf, "持ちハンディ": nh, "写真": photo_b64}])
-                    safe_save(pd.concat([f_df, new_friend], ignore_index=True), "friends")
+                    st.rerun()
+
+    with st.expander("👤 Add New Friend"):
+        nf = st.text_input("Name", key="side_new_name")
+        nh = st.number_input("Initial HC", value=0.0, key="side_new_hc")
+        if st.button("💎 Register Friend"):
+            if nf:
+                new_friend = pd.DataFrame([{"名前": nf, "持ちハンディ": nh, "写真": ""}])
+                safe_save(pd.concat([f_df, new_friend], ignore_index=True), "friends")
                 st.rerun()
 
     with st.expander("⛳️ Add Course"):
