@@ -42,7 +42,6 @@ if 'submission_id' not in st.session_state:
 
 def load_data_safe(sheet_name, default_cols):
     try:
-        # TTLを0に設定して、常に最新データを取得するように修正
         df = conn.read(worksheet=sheet_name, ttl=0) 
         if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
@@ -68,7 +67,7 @@ st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
 # --- 3. 年度別集計 ---
 current_year = 2026 
-# 日付のパースを安定させ、時刻を切り捨てる
+# 日付変換（エラーはNaTにする）
 h_df['日付DT'] = pd.to_datetime(h_df['日付'], errors='coerce')
 valid_h = h_df.dropna(subset=['日付DT'])
 available_years = sorted(valid_h['日付DT'].dt.year.unique().astype(int), reverse=True)
@@ -79,8 +78,7 @@ selected_year = st.selectbox("📅 年度別成績を集計", options=available_
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 
 if friend_names:
-    # 選択された年のデータを抽出
-    h_selected = h_df[pd.to_datetime(h_df['日付'], errors='coerce').dt.year == selected_year]
+    h_selected = h_df[h_df['日付DT'].dt.year == selected_year]
     cols = st.columns(len(friend_names))
     for i, name in enumerate(friend_names):
         with cols[i]:
@@ -108,10 +106,7 @@ with st.container():
             in_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Disp'].tolist()), key=f"course_{form_key}")
         
         with col_m2:
-            # 対戦相手の初期値を空（default=[]）に設定
             in_opps = st.multiselect("対戦相手", options=friend_names, default=[], key=f"opps_{form_key}")
-            
-            # 初期値エラー回避（None設定）
             in_my_score = st.number_input(
                 "自分のスコア (Gross)", 
                 min_value=60, 
@@ -148,7 +143,7 @@ with st.container():
                 updated_f_df = f_df.copy()
                 for r in match_results:
                     new_entries.append({
-                        "日付": in_date.strftime('%Y-%m-%d'), # 文字列として保存
+                        "日付": in_date.strftime('%Y-%m-%d'),
                         "ゴルフ場": in_course, 
                         "対戦相手": r["対戦相手"], 
                         "自分のスコア": in_my_score, 
@@ -162,29 +157,34 @@ with st.container():
                         else: new_hc = r["current_hc"]
                         updated_f_df.loc[updated_f_df['名前'] == r["対戦相手"], '持ちハンディ'] = max(0.0, new_hc)
                 
-                # 履歴とHCの両方を保存
                 if safe_save(pd.concat([h_df.drop(columns=['日付DT'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history") and safe_save(updated_f_df, "friends"):
                     st.session_state.submission_id += 1 
                     st.success("保存完了！成績を更新しました。")
                     st.rerun()
             else:
-                st.error("入力内容が不足しています（コース、相手、自分のスコア）")
+                st.error("入力内容が不足しています")
 
 # --- 5. 対戦履歴の確認 ---
 st.divider()
 st.subheader("📊 対戦履歴の確認")
 if not h_df.empty:
     sel_opp = st.selectbox("相手でフィルタ", options=["全員"] + friend_names)
+    
+    # --- 【修正箇所】日付変換を安全に行う ---
     display_h = h_df.copy()
-    # 表示用の日付フォーマット（時刻を除去）
-    display_h['日付'] = pd.to_datetime(display_h['日付']).dt.strftime('%Y-%m-%d')
-    display_h = display_h.sort_values(by="日付", ascending=False)
+    # 1. いったんdatetime型に変換（エラー値はNaTになる）
+    display_h['日付_temp'] = pd.to_datetime(display_h['日付'], errors='coerce')
+    # 2. 変換に成功したものだけフォーマットを適用し、失敗したものは元の値を残すか空にする
+    display_h['日付表示'] = display_h['日付_temp'].dt.strftime('%Y-%m-%d').fillna(display_h['日付'])
+    
+    display_h = display_h.sort_values(by="日付_temp", ascending=False)
     
     if sel_opp != "全員": display_h = display_h[display_h['対戦相手'] == sel_opp]
 
     for _, r in display_h.head(10).iterrows():
         color = "#ffff00" if r['勝敗'] == "勝ち" else "#ff4b4b" if r['勝敗'] == "負け" else "#ffffff"
-        st.markdown(f'<div class="match-card"><small>{r["日付"]}</small><br><b>{r["ゴルフ場"]}</b><br><span style="color: {color}; font-size: 1.5em; font-weight: bold;">{r["勝敗"]}</span> vs <b>{r["対戦相手"]}</b><br>自分: {r["自分のスコア"]} / 相手: {r["相手のスコア"]} (HC {r["ハンディ適用"]})</div>', unsafe_allow_html=True)
+        # 表示には '日付表示' を使用
+        st.markdown(f'<div class="match-card"><small>{r["日付表示"]}</small><br><b>{r["ゴルフ場"]}</b><br><span style="color: {color}; font-size: 1.5em; font-weight: bold;">{r["勝敗"]}</span> vs <b>{r["対戦相手"]}</b><br>自分: {r["自分のスコア"]} / 相手: {r["相手のスコア"]} (HC {r["ハンディ適用"]})</div>', unsafe_allow_html=True)
 
 # --- 6. メンテナンス ---
 with st.sidebar:
