@@ -1,9 +1,17 @@
+ついに連携成功ですね！八木さん（HC: 4.0）とケンさん（HC: 0.0）のデータが並んでいるのを見て、私も自分のことのように嬉しいです。
+
+お待たせいたしました。連携したスプレッドシートをフル活用しつつ、「友達追加」「写真管理」「対戦履歴の修正」「コース追加」のすべてを以前の「プロ版デザイン」で復活させた完全版コードを書き上げました。
+
+🚀 【機能全復活】ゴルフ勝負管理アプリ・プロ版（GSheets完全対応）
+GitHubの golf_app.py をこのコードで上書きしてください。
+
+Python
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
 
-# デザイン設定
+# --- 1. デザイン設定 (視認性重視のグリーン＆縁取り文字) ---
 st.set_page_config(page_title="Golf Battle Tracker", page_icon="⛳️", layout="wide")
 st.markdown("""
     <style>
@@ -17,78 +25,129 @@ st.markdown("""
         background-color: rgba(255, 255, 255, 0.15) !important;
         border: 2px solid #ffffff !important;
         border-radius: 15px !important;
+        padding: 10px !important;
     }
     div[data-testid="stMetricValue"] { color: #ffff00 !important; text-shadow: 2px 2px 2px #000 !important; }
+    section[data-testid="stSidebar"] { background-color: #0c331a !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# GSheets接続
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception as e:
-    st.error(f"接続設定（Secrets）に不備があります: {e}")
+# --- 2. Googleスプレッドシート連携 ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_data_safe(sheet_name, fallback_cols):
+def load_data(sheet_name, key_col):
     try:
-        # サービスアカウント経由で読み込み
         df = conn.read(worksheet=sheet_name, ttl="0s")
         if df is not None and not df.empty:
-            df = df.dropna(how='all') # 完全に空の行を削除
+            df = df.dropna(subset=[key_col]) # 空行を削除
             return df
-    except Exception:
-        pass
-    # 読み込み失敗時は空のデータフレームを返す（エラーにしない）
-    return pd.DataFrame(columns=fallback_cols)
+        return pd.DataFrame()
+    except:
+        return pd.DataFrame()
+
+def update_spreadsheet(df, sheet_name):
+    try:
+        conn.update(worksheet=sheet_name, data=df)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"保存失敗: {e}")
+        return False
 
 # データの読み込み
-f_df = load_data_safe("friends", ['名前', '持ちハンディ', '写真'])
-h_df = load_data_safe("history", ['日付', 'ゴルフ場', '対戦相手', '自分のスコア', '相手のスコア', '勝敗', 'ハンディ適用'])
-c_df = load_data_safe("courses", ['Name', 'City', 'State'])
+f_df = load_data("friends", "名前")
+h_df = load_data("history", "日付")
+c_df = load_data("courses", "Name")
 
 st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
-# --- 1. 通算成績の表示 ---
-st.subheader("📈 通算成績（グロス勝負）")
-if not f_df.empty and '名前' in f_df.columns:
+# --- 3. メイン：通算成績（友達リスト） ---
+if not f_df.empty:
+    st.subheader("📈 通算成績（グロス勝負）")
     cols = st.columns(len(f_df))
     for i, (idx, row) in enumerate(f_df.iterrows()):
         with cols[i]:
-            # TypeError対策: 値が必ず存在するように変換
-            name = str(row['名前']) if pd.notnull(row['名前']) else "Unknown"
-            hc = str(row['持ちハンディ']) if pd.notnull(row['持ちハンディ']) else "0"
-            
+            name = str(row['名前'])
             stats = h_df[h_df['対戦相手'] == name] if not h_df.empty else pd.DataFrame()
             w = (stats['勝敗'] == "勝ち").sum()
             l = (stats['勝敗'] == "負け").sum()
             
-            st.metric(label=name, value=f"{w}勝 {l}敗", delta=f"HC: {hc}")
-else:
-    st.info("スプレッドシートの接続を確認してください。")
+            # 写真の表示 (URLまたはパスがある場合)
+            if '写真' in row and pd.notnull(row['写真']) and str(row['写真']) != "":
+                st.image(row['写真'], width=120)
+            else:
+                st.write("📷 No Photo")
+            
+            st.metric(label=name, value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
 
-# --- 2. ラウンド結果入力 ---
+# --- 4. ラウンド結果入力 ---
 st.divider()
 with st.expander("📝 ラウンド結果を入力"):
-    if not f_df.empty and '名前' in f_df.columns:
+    if not f_df.empty and not c_df.empty:
         col1, col2 = st.columns(2)
         with col1:
             p_date = st.date_input("日付", date.today())
-            # コース選択 (Costa MesaやIrvineのコースを表示)
-            if not c_df.empty:
-                c_list = (c_df['Name'].fillna('') + " (" + c_df['City'].fillna('') + ")").tolist()
-                st.selectbox("コースを選択", options=sorted(c_list))
-            else:
-                st.selectbox("コースを選択", options=["Rancho San Joaquin", "Costa Mesa CC"])
+            c_list = c_df['Name'] + " (" + c_df['City'].fillna('') + ")"
+            course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_list.tolist()))
         with col2:
-            st.multiselect("対戦相手", options=f_df['名前'].dropna().tolist())
-            st.number_input("自分のスコア", 70, 150, 90)
-    else:
-        st.warning("データが取得できていません。")
+            opps = st.multiselect("対戦相手", options=f_df['名前'].tolist())
+            my_gross = st.number_input("自分のスコア", 70, 150, 90)
 
-# --- 3. デバッグ情報（困った時用） ---
+        if opps and my_gross > 0:
+            round_results = []
+            for opp in opps:
+                st.write(f"--- vs {opp} ---")
+                cc1, cc2 = st.columns(2)
+                o_score = cc1.number_input(f"{opp}のスコア", 0, 150, 0, key=f"s_{opp}")
+                res = cc2.selectbox(f"結果", ["勝ち", "負け", "引き分け"], key=f"r_{opp}")
+                round_results.append({"opp": opp, "score": o_score, "res": res})
+            
+            if st.button("🚀 ラウンドを保存"):
+                new_h = []
+                for r in round_results:
+                    new_h.append({
+                        "日付": p_date.strftime('%Y-%m-%d'), "ゴルフ場": course, "対戦相手": r["opp"],
+                        "自分のスコア": my_gross, "相手のスコア": r["score"], "勝敗": r["res"], "ハンディ適用": "なし"
+                    })
+                new_history_df = pd.concat([h_df, pd.DataFrame(new_h)], ignore_index=True)
+                if update_spreadsheet(new_history_df, "history"):
+                    st.success("履歴を保存しました！")
+                    st.rerun()
+
+# --- 5. 対戦履歴の表示・修正 ---
+st.divider()
+with st.expander("📊 対戦履歴の確認・修正"):
+    if not h_df.empty:
+        # 日付順にソートして表示
+        sorted_h = h_df.sort_values(by="日付", ascending=False)
+        edited_h = st.data_editor(sorted_h, num_rows="dynamic", use_container_width=True)
+        if st.button("履歴の修正を保存"):
+            if update_spreadsheet(edited_h, "history"):
+                st.success("履歴を更新しました")
+                st.rerun()
+
+# --- 6. サイドバー：メンテナンス (友達・コース追加) ---
 with st.sidebar:
-    if st.checkbox("デバッグ情報を表示"):
-        st.write("Friendsデータ:", f_df)
-        st.write("Historyデータ:", h_df)
-    if st.button("最新データを強制取得"):
+    st.header("⚙️ メンテナンス")
+    
+    with st.expander("👤 友達を追加"):
+        f_name = st.text_input("名前")
+        f_hc = st.number_input("ハンディ", value=0.0)
+        f_pic = st.text_input("写真URL (任意)")
+        if st.button("友達を保存"):
+            if f_name:
+                new_f = pd.concat([f_df, pd.DataFrame([{"名前": f_name, "持ちハンディ": f_hc, "写真": f_pic}])], ignore_index=True)
+                if update_spreadsheet(new_f, "friends"): st.rerun()
+
+    with st.expander("⛳️ ゴルフ場を追加"):
+        c_name = st.text_input("コース名")
+        c_city = st.text_input("City", value="Costa Mesa")
+        if st.button("コースを保存"):
+            if c_name:
+                new_c = pd.concat([c_df, pd.DataFrame([{"Name": c_name, "City": c_city, "State": "CA"}])], ignore_index=True)
+                if update_spreadsheet(new_c, "courses"): st.rerun()
+
+    st.divider()
+    if st.button("最新データに更新"):
         st.cache_data.clear()
         st.rerun()
