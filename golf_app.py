@@ -42,10 +42,13 @@ if 'submission_id' not in st.session_state:
 
 def load_data_safe(sheet_name, default_cols):
     try:
-        # キャッシュを無効化(ttl=0)して常に最新を取得
-        df = conn.read(worksheet=sheet_name, ttl=0) 
+        df = conn.read(worksheet=sheet_name, ttl=0)
         if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
+            # --- 【修正】KeyError対策：必要なカラムが存在しない場合は空で作成 ---
+            for col in default_cols:
+                if col not in df.columns:
+                    df[col] = None
             return df.dropna(how='all')
     except: pass
     return pd.DataFrame(columns=default_cols)
@@ -82,10 +85,10 @@ if friend_names:
     for i, name in enumerate(friend_names):
         with cols[i]:
             row = f_df[f_df['名前'] == name].iloc[0]
+            # --- 【修正】相手のスコアの有無に関わらず「勝敗」カラムから集計 ---
             stats = h_selected[h_selected['対戦相手'] == name] if not h_selected.empty else pd.DataFrame()
-            # 「相手のスコア」がなくても「勝敗」カラムの値で集計
-            w = (stats['勝敗'] == "勝ち").sum()
-            l = (stats['勝敗'] == "負け").sum()
+            w = (stats['勝敗'] == "勝ち").sum() if '勝敗' in stats.columns else 0
+            l = (stats['勝敗'] == "負け").sum() if '勝敗' in stats.columns else 0
             
             if '写真' in row and pd.notnull(row['写真']) and str(row['写真']).startswith("data:image"):
                 st.image(row['写真'], width=120)
@@ -104,7 +107,6 @@ with st.container():
             c_df['Disp'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
             in_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Disp'].tolist()), key=f"course_{form_key}")
         with col_m2:
-            # 初期値を空にするため default=[] を指定
             in_opps = st.multiselect("対戦相手", options=friend_names, default=[], key=f"opps_{form_key}")
             in_my_score = st.number_input("自分のスコア (Gross)", 60, 150, value=None, placeholder="数値を入力", key=f"my_score_{form_key}")
 
@@ -117,8 +119,6 @@ with st.container():
                 use_hc = c2.checkbox("HC適用", value=False, key=f"hc_{opp}_{form_key}")
                 
                 opp_hc = pd.to_numeric(f_df.loc[f_df['名前'] == opp, '持ちハンディ']).iloc[0] if opp in friend_names else 0
-                
-                # 計算用ネットスコア: $NetScore = Gross - Handicap$
                 net_user_score = (in_my_score - opp_hc) if (use_hc and in_my_score is not None) else in_my_score
                 
                 auto_res_idx = 0 # デフォルト「勝ち」
@@ -127,7 +127,6 @@ with st.container():
                     elif net_user_score > opp_s: auto_res_idx = 1
                     else: auto_res_idx = 2
                 
-                # 修正：相手のスコアが0でも結果を自由に選べるように、disabledの条件を緩和
                 res = c3.selectbox("結果", ["勝ち", "負け", "引き分け"], index=auto_res_idx, key=f"r_{opp}_{form_key}")
                 match_results.append({"対戦相手": opp, "相手のスコア": opp_s if opp_s > 0 else "-", "勝敗": res, "ハンディ適用": "あり" if use_hc else "なし", "current_hc": opp_hc})
 
@@ -151,7 +150,7 @@ with st.container():
                     st.success("保存完了！")
                     st.rerun()
 
-# --- 5. 対戦履歴の確認と直接編集 (HC連動機能の復元) ---
+# --- 5. 対戦履歴の確認と直接編集 (HC連動・削除機能を完全復旧) ---
 st.divider()
 st.subheader("📊 対戦履歴の確認")
 if not h_df.empty:
@@ -162,12 +161,10 @@ if not h_df.empty:
     
     if sel_opp != "全員": display_h = display_h[display_h['対戦相手'] == sel_opp]
 
-    # 直近5件のカード表示
     for _, r in display_h.head(5).iterrows():
         color = "#ffff00" if r['勝敗'] == "勝ち" else "#ff4b4b" if r['勝敗'] == "負け" else "#ffffff"
         st.markdown(f'<div class="match-card"><small>{r["日付表示"]}</small><br><b>{r["ゴルフ場"]}</b><br><span style="color: {color}; font-size: 1.5em; font-weight: bold;">{r["勝敗"]}</span> vs <b>{r["対戦相手"]}</b><br>自分: {r["自分のスコア"]} / 相手: {r["相手のスコア"]} (HC {r["ハンディ適用"]})</div>', unsafe_allow_html=True)
     
-    # 履歴編集エディタ（復元部分）
     with st.expander("💾 履歴を直接編集・削除する (HC自動連動)"):
         st.warning("履歴を削除または修正すると、該当する対戦相手のHCが自動的に±2.0再計算されます。")
         original_h = h_df.copy().drop(columns=['日付DT'], errors='ignore')
@@ -175,7 +172,7 @@ if not h_df.empty:
         
         if st.button("履歴の修正・削除を反映する"):
             updated_f_df = f_df.copy()
-            # 削除された行を特定してHCを戻すロジック
+            # 削除・修正に伴うHCの逆計算ロジック
             for _, old_r in original_h.iterrows():
                 is_deleted = True
                 for _, new_r in edited_h_df.iterrows():
@@ -193,7 +190,7 @@ if not h_df.empty:
                         updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ'] = new_hc
 
             if safe_save(edited_h_df, "history") and safe_save(updated_f_df, "friends"):
-                st.success("同期完了！")
+                st.success("履歴とハンディキャップを同期しました。")
                 st.rerun()
 
 # --- 6. メンテナンス ---
