@@ -6,7 +6,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 
-# --- 1. デザイン設定 ---
+# --- 1. デザイン設定 (縁取り文字・グリーン背景) ---
 st.set_page_config(page_title="Golf Battle Tracker", page_icon="⛳️", layout="wide")
 st.markdown("""
     <style>
@@ -27,7 +27,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. Googleスプレッドシート連携 (安全設計) ---
+# --- 2. Googleスプレッドシート連携 ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data_safe(sheet_name, default_cols):
@@ -40,20 +40,16 @@ def load_data_safe(sheet_name, default_cols):
         pass
     return pd.DataFrame(columns=default_cols)
 
-# データ保存時の二重チェック関数
 def safe_save(df, sheet_name, key_col):
     if df is None or df.empty:
-        st.error("保存しようとしたデータが空です。処理を中断しました。")
-        return False
-    if key_col not in df.columns or df[key_col].dropna().empty:
-        st.error(f"有効な{key_col}が見つかりません。データの消失を防ぐため保存をブロックしました。")
+        st.error("保存するデータがありません。")
         return False
     try:
         conn.update(worksheet=sheet_name, data=df)
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"スプレッドシートの更新に失敗しました: {e}")
+        st.error(f"保存失敗: {e}")
         return False
 
 # データのロード
@@ -63,7 +59,7 @@ c_df = load_data_safe("courses", ['Name', 'City', 'State'])
 
 st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
-# --- 3. 年度別の選択と集計 (初期表示: 2026年) ---
+# --- 3. 年度別集計 (2026年初期表示) ---
 current_year = 2026
 if not h_df.empty and '日付' in h_df.columns:
     h_df['日付DT'] = pd.to_datetime(h_df['日付'], errors='coerce')
@@ -73,12 +69,10 @@ if not h_df.empty and '日付' in h_df.columns:
         available_years = [current_year] + list(available_years)
 else:
     available_years = [current_year]
-
 selected_year = st.selectbox("集計する年を選択", options=available_years, index=0)
 
-# --- 4. メイン：通算成績の表示 ---
+# --- 4. 通算成績の表示 ---
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
-
 if friend_names:
     h_selected = h_df[pd.to_datetime(h_df['日付'], errors='coerce').dt.year == selected_year] if not h_df.empty else pd.DataFrame()
     cols = st.columns(len(friend_names))
@@ -95,7 +89,7 @@ if friend_names:
                 st.write("📷 No Photo")
             st.metric(label=f"{name} ({selected_year}年)", value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
 
-# --- 5. 対戦相手別の履歴確認 ---
+# --- 5. 対戦履歴の確認 ---
 st.divider()
 st.subheader("📊 対戦履歴の確認（相手別）")
 if not h_df.empty:
@@ -106,28 +100,12 @@ if not h_df.empty:
     cols_to_show = [c for c in ['日付', 'ゴルフ場', '対戦相手', '自分のスコア', '相手のスコア', '勝敗', 'ハンディ適用'] if c in view_df.columns]
     st.data_editor(view_df[cols_to_show].sort_values(by="日付", ascending=False), use_container_width=True)
 
-# --- 6. メンテナンス (安全性強化) ---
+# --- 6. システムメンテナンス (独立したブロック) ---
 with st.sidebar:
     st.header("⚙️ システムメンテナンス")
     
-    with st.expander("📸 友達の写真をアップロード", expanded=False):
-        if friend_names:
-            target_f = st.selectbox("対象の友達", options=friend_names, key="safe_upload")
-            img_file = st.file_uploader("画像を選択", type=['png', 'jpg', 'jpeg'])
-            if img_file and st.button(f"{target_f}さんの写真を保存"):
-                # 画像を徹底的にリサイズしてデータ量を落とす
-                img = Image.open(img_file)
-                img.thumbnail((100, 100)) 
-                buf = BytesIO()
-                img.save(buf, format="JPEG", quality=50) # 画質を落として軽量化
-                img_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-                
-                f_df.loc[f_df['名前'] == target_f, '写真'] = img_b64
-                if safe_save(f_df, "friends", "名前"):
-                    st.success("写真を更新しました！")
-                    st.rerun()
-
-    with st.expander("⛳️ 新しいコースを追加"):
+    # 【修正点】コース追加を独立させ、エラーに影響されないように配置
+    with st.expander("⛳️ 新しいコースを追加", expanded=False):
         nc_name = st.text_input("コース名")
         nc_city = st.text_input("City", value="Costa Mesa")
         nc_state = st.text_input("State", value="CA")
@@ -135,8 +113,32 @@ with st.sidebar:
             if nc_name:
                 new_row = pd.DataFrame([{"Name": nc_name, "City": nc_city, "State": nc_state}])
                 if safe_save(pd.concat([c_df, new_row], ignore_index=True), "courses", "Name"):
-                    st.success("コースを追加しました。")
+                    st.success("追加しました！")
                     st.rerun()
+
+    # 【修正点】写真アップロード時のOSError対策
+    with st.expander("📸 友達の写真をアップロード", expanded=False):
+        if friend_names:
+            target_f = st.selectbox("対象の友達", options=friend_names, key="up_target")
+            img_file = st.file_uploader("画像を選択", type=['png', 'jpg', 'jpeg'])
+            if img_file and st.button(f"{target_f}さんの写真を保存"):
+                try:
+                    img = Image.open(img_file)
+                    # 【重要】透明度(RGBA)があるPNGでも保存できるよう、強制的にRGBに変換
+                    img = img.convert("RGB")
+                    img.thumbnail((100, 100))
+                    buf = BytesIO()
+                    img.save(buf, format="JPEG", quality=60)
+                    img_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+                    
+                    f_df.loc[f_df['名前'] == target_f, '写真'] = img_b64
+                    if safe_save(f_df, "friends", "名前"):
+                        st.success("写真を更新しました！")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"写真の処理に失敗しました: {e}")
+        else:
+            st.write("友達データがありません。")
 
     st.divider()
     if st.button("🔄 最新データに強制更新"):
