@@ -42,17 +42,16 @@ if 'submission_id' not in st.session_state:
 
 def load_data_safe(sheet_name, default_cols):
     try:
-        df = conn.read(worksheet=sheet_name, ttl=0) # キャッシュなしで常に最新を読み込む
+        df = conn.read(worksheet=sheet_name, ttl=0)
         if df is not None:
-            # カラム名の空白除去
+            # カラム名と値の空白を完全に除去
             df.columns = [str(c).strip() for c in df.columns]
-            # 必須カラムの存在確認
-            for col in default_cols:
-                if col not in df.columns: df[col] = None
-            # 値の空白除去（比較用）
             for col in df.columns:
                 if df[col].dtype == 'object':
                     df[col] = df[col].astype(str).str.strip()
+            # 必須カラムの補完
+            for col in default_cols:
+                if col not in df.columns: df[col] = None
             return df.dropna(how='all')
     except: pass
     return pd.DataFrame(columns=default_cols)
@@ -73,33 +72,37 @@ c_df = load_data_safe("courses", ['Name', 'City', 'State'])
 
 st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
-# --- 3. 年度別集計 ---
+# --- 3. 年度別集計 (集計ロジックの修正) ---
 current_year = 2026 
-h_df['日付DT'] = pd.to_datetime(h_df['日付'], errors='coerce')
-valid_h = h_df.dropna(subset=['日付DT'])
-available_years = sorted(valid_h['日付DT'].dt.year.unique().astype(int), reverse=True)
+# 日付変換エラーをNaTにせず、可能な限り年を抽出
+h_df['Year'] = pd.to_datetime(h_df['日付'], errors='coerce').dt.year
+# 日付が解析できない行も念のため文字列検索で年を判定
+h_df.loc[h_df['Year'].isna(), 'Year'] = h_df['日付'].astype(str).apply(lambda x: int(x[:4]) if x[:4].isdigit() else None)
+
+available_years = sorted(h_df['Year'].dropna().unique().astype(int), reverse=True)
 if current_year not in available_years: available_years = [current_year] + available_years
-selected_year = st.selectbox("📅 年度別成績を集計", options=available_years, index=0)
+selected_year = st.selectbox("📅 年度別成績を集計", options=available_years, index=available_years.index(current_year) if current_year in available_years else 0)
 
 friend_names = f_df['名前'].dropna().unique().tolist() if '名前' in f_df.columns else []
 
 if friend_names:
-    h_selected = h_df[h_df['日付DT'].dt.year == selected_year]
+    # 選択した年のデータを抽出
+    h_selected = h_df[h_df['Year'] == selected_year]
     cols = st.columns(len(friend_names))
     for i, name in enumerate(friend_names):
         with cols[i]:
             row = f_df[f_df['名前'] == name].iloc[0]
-            # 勝敗のカウント（相手のスコア有無に依存しない）
+            # --- 勝敗集計の核心：スプレッドシートの「勝敗」カラムの文字列を直接カウント ---
             stats = h_selected[h_selected['対戦相手'] == name] if not h_selected.empty else pd.DataFrame()
-            w = (stats['勝敗'] == "勝ち").sum() if '勝敗' in stats.columns else 0
-            l = (stats['勝敗'] == "負け").sum() if '勝敗' in stats.columns else 0
+            w = (stats['勝敗'] == "勝ち").sum()
+            l = (stats['勝敗'] == "負け").sum()
             
             if '写真' in row and pd.notnull(row['写真']) and str(row['写真']).startswith("data:image"):
                 st.image(row['写真'], width=120)
             else: st.write("📷 No Photo")
             st.metric(label=f"{name} ({selected_year}年)", value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
 
-# --- 4. ラウンド結果の入力フォーム ---
+# --- 4. ラウンド結果の入力フォーム (初期値リセット) ---
 st.divider()
 with st.container():
     st.subheader("📝 ラウンド結果を記録する")
@@ -111,7 +114,7 @@ with st.container():
             c_df['Disp'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
             in_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Disp'].tolist()), key=f"course_{form_key}")
         with col_m2:
-            # 初期値を空に設定
+            # 初期値を空([])にする
             in_opps = st.multiselect("対戦相手", options=friend_names, default=[], key=f"opps_{form_key}")
             in_my_score = st.number_input("自分のスコア (Gross)", 60, 150, value=None, placeholder="数値を入力", key=f"my_score_{form_key}")
 
@@ -123,8 +126,8 @@ with st.container():
                 opp_s = c1.number_input(f"{opp}のスコア (不明は0)", 0, 150, 0, key=f"s_{opp}_{form_key}")
                 use_hc = c2.checkbox("HC適用", value=False, key=f"hc_{opp}_{form_key}")
                 
-                opp_hc_val = f_df.loc[f_df['名前'] == opp, '持ちハンディ'].iloc[0] if opp in friend_names else 0
-                opp_hc = pd.to_numeric(opp_hc_val, errors='coerce') if pd.notnull(opp_hc_val) else 0
+                opp_hc_raw = f_df.loc[f_df['名前'] == opp, '持ちハンディ'].iloc[0] if opp in friend_names else 0
+                opp_hc = pd.to_numeric(opp_hc_raw, errors='coerce') if pd.notnull(opp_hc_raw) else 0
                 
                 net_user_score = (in_my_score - opp_hc) if (use_hc and in_my_score is not None) else in_my_score
                 
@@ -134,7 +137,7 @@ with st.container():
                     elif net_user_score > opp_s: auto_res_idx = 1
                     else: auto_res_idx = 2
                 
-                # スコア不明でも自由に勝敗を選べるように設定
+                # スコア不明でも自由に勝敗を選べる
                 res = c3.selectbox("結果", ["勝ち", "負け", "引き分け"], index=auto_res_idx, key=f"r_{opp}_{form_key}")
                 match_results.append({"対戦相手": opp, "相手のスコア": opp_s if opp_s > 0 else "-", "勝敗": res, "ハンディ適用": "あり" if use_hc else "なし", "current_hc": opp_hc})
 
@@ -153,17 +156,18 @@ with st.container():
                         else: new_hc = r["current_hc"]
                         updated_f_df.loc[updated_f_df['名前'] == r["対戦相手"], '持ちハンディ'] = max(0.0, float(new_hc))
                 
-                if safe_save(pd.concat([h_df.drop(columns=['日付DT'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history") and safe_save(updated_f_df, "friends"):
+                if safe_save(pd.concat([h_df.drop(columns=['Year'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history") and safe_save(updated_f_df, "friends"):
                     st.session_state.submission_id += 1 
                     st.success("保存完了！")
                     st.rerun()
 
-# --- 5. 対戦履歴の確認と編集（HC連動ロジック復旧） ---
+# --- 5. 対戦履歴の確認 (時刻表示の削除・HC連動復旧) ---
 st.divider()
 st.subheader("📊 対戦履歴の確認")
 if not h_df.empty:
     sel_opp = st.selectbox("相手でフィルタ", options=["全員"] + friend_names)
     display_h = h_df.copy()
+    # 時刻 0:00:00 を消すため、日付のみを抽出
     display_h['日付表示'] = pd.to_datetime(display_h['日付'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(display_h['日付'])
     display_h = display_h.sort_values(by="日付", ascending=False)
     
@@ -175,7 +179,7 @@ if not h_df.empty:
     
     with st.expander("💾 履歴を直接編集・削除する (HC自動連動)"):
         st.warning("履歴を削除または修正すると、該当する対戦相手のHCが自動的に±2.0再計算されます。")
-        original_h = h_df.copy().drop(columns=['日付DT'], errors='ignore')
+        original_h = h_df.copy().drop(columns=['Year'], errors='ignore')
         edited_h_df = st.data_editor(original_h, use_container_width=True, num_rows="dynamic", key="h_editor_main")
         
         if st.button("履歴の修正・削除を反映する"):
@@ -183,7 +187,6 @@ if not h_df.empty:
             for _, old_r in original_h.iterrows():
                 is_deleted = True
                 for _, new_r in edited_h_df.iterrows():
-                    # 行の内容を比較して削除されたか判定
                     if all(old_r.astype(str) == new_r.astype(str)): 
                         is_deleted = False
                         break
@@ -191,14 +194,14 @@ if not h_df.empty:
                 if is_deleted and old_r['ハンディ適用'] == "あり":
                     opp_name = old_r['対戦相手']
                     if opp_name in updated_f_df['名前'].values:
-                        current_hc = pd.to_numeric(updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ']).iloc[0]
-                        if old_r['勝敗'] == "勝ち": new_hc = current_hc + 2.0
-                        elif old_r['勝敗'] == "負け": new_hc = max(0.0, current_hc - 2.0)
-                        else: new_hc = current_hc
+                        curr_hc = pd.to_numeric(updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ']).iloc[0]
+                        if old_r['勝敗'] == "勝ち": new_hc = curr_hc + 2.0
+                        elif old_r['勝敗'] == "負け": new_hc = max(0.0, curr_hc - 2.0)
+                        else: new_hc = curr_hc
                         updated_f_df.loc[updated_f_df['名前'] == opp_name, '持ちハンディ'] = new_hc
 
             if safe_save(edited_h_df, "history") and safe_save(updated_f_df, "friends"):
-                st.success("同期完了！")
+                st.success("履歴とハンディキャップを同期しました。")
                 st.rerun()
 
 # --- 6. メンテナンス ---
