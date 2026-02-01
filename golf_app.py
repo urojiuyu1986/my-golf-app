@@ -39,8 +39,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data_safe(sheet_name, default_cols):
     try:
-        # 【修正】ttlを"0s"から"1m"に変更。
-        # 操作のたびにAPIを叩くのを防ぎ、Quota Exceededエラーを回避します。
+        # 1分間のキャッシュを持たせ、Read APIの制限(429)を回避
         df = conn.read(worksheet=sheet_name, ttl="1m")
         if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
@@ -54,7 +53,7 @@ def load_data_safe(sheet_name, default_cols):
 def safe_save(df, sheet_name):
     try:
         conn.update(worksheet=sheet_name, data=df)
-        st.cache_data.clear() # 保存後はキャッシュを消して最新状態にする
+        st.cache_data.clear() 
         return True
     except Exception as e:
         st.error(f"保存失敗: {e}")
@@ -68,7 +67,7 @@ c_df = load_data_safe("courses", ['Name', 'City', 'State'])
 st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
 # --- 3. 年度別集計 (2026年) ---
-current_year = 2026
+current_year = 2026 #
 h_df['日付DT'] = pd.to_datetime(h_df['日付'], errors='coerce')
 valid_h = h_df.dropna(subset=['日付DT'])
 available_years = sorted(valid_h['日付DT'].dt.year.unique().astype(int), reverse=True)
@@ -101,7 +100,8 @@ with st.container():
             in_date = st.date_input("日付", date.today())
             c_df['Disp'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
             in_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Disp'].tolist()))
-        with col2_m2 := col2: # 誤字修正
+        # --- 修正箇所：SyntaxErrorを解消 ---
+        with col_m2:
             in_opps = st.multiselect("対戦相手", options=friend_names)
             in_my_score = st.number_input("自分のスコア (Gross)", 60, 150, 90)
 
@@ -124,11 +124,12 @@ with st.container():
                         "対戦相手": r["対戦相手"], "自分のスコア": in_my_score, 
                         "相手のスコア": r["相手のスコア"], "勝敗": r["勝敗"], "ハンディ適用": r["ハンディ適用"]
                     })
+                # 保存時に一時的な列を削除して整合性を保つ
                 if safe_save(pd.concat([h_df.drop(columns=['日付DT'], errors='ignore'), pd.DataFrame(new_entries)], ignore_index=True), "history"):
                     st.success("保存完了！")
                     st.rerun()
 
-# --- 5. 対戦履歴のタイムライン表示 ---
+# --- 5. 対戦履歴のタイムライン表示 (スタイリッシュ版) ---
 st.divider()
 st.subheader("📊 対戦履歴の確認")
 if not h_df.empty:
