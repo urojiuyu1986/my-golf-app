@@ -124,7 +124,7 @@ if friend_names:
             row = f_df[f_df['名前'] == name].iloc[0]
             stats = h_selected[h_selected['対戦相手'] == name] if not h_selected.empty else pd.DataFrame()
             
-            # Count results (Supports both EN and JP sheet values)
+            # Count results
             w = (stats['勝敗'].isin(["Win", "勝ち"])).sum()
             l = (stats['勝敗'].isin(["Loss", "負け"])).sum()
             
@@ -153,7 +153,8 @@ with st.container():
             for opp in in_opps:
                 st.markdown(f"#### ⚔️ VS {opp}")
                 c1, c2, c3 = st.columns(3)
-                opp_s = c1.number_input(f"🔢 {opp}'s Score", 0, 150, 0, key=f_s_{opp}_{form_key}")
+                # --- FIXED LINE BELOW (Syntax Error Resolved) ---
+                opp_s = c1.number_input(f"🔢 {opp}'s Score", 0, 150, 0, key=f"s_{opp}_{form_key}")
                 use_hc = c2.checkbox("⚖️ Apply Handicap", value=False, key=f"hc_{opp}_{form_key}")
                 
                 opp_hc_raw = f_df.loc[f_df['名前'] == opp, '持ちハンディ'].iloc[0] if opp in friend_names else 0
@@ -161,7 +162,7 @@ with st.container():
                 
                 net_user_score = (in_my_score - opp_hc) if (use_hc and in_my_score is not None) else in_my_score
                 
-                auto_res_idx = 0 # Default to Win
+                auto_res_idx = 0 
                 if opp_s > 0 and in_my_score is not None:
                     if net_user_score < opp_s: auto_res_idx = 0 
                     elif net_user_score > opp_s: auto_res_idx = 1
