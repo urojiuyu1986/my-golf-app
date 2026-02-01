@@ -28,7 +28,24 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data(sheet_name):
-    return conn.read(worksheet=sheet_name, ttl="0s")
+    try:
+        # データを読み込む
+        df = conn.read(worksheet=sheet_name, ttl="0s")
+        # もしデータが空（列名しかない）場合でもエラーにしない
+        if df is None or df.empty:
+            if sheet_name == "friends":
+                return pd.DataFrame(columns=['名前', '持ちハンディ', '写真'])
+            elif sheet_name == "history":
+                return pd.DataFrame(columns=['日付', 'ゴルフ場', '対戦相手', '自分のスコア', '相手のスコア', '勝敗', 'ハンディ適用'])
+            else:
+                return pd.DataFrame(columns=['Name', 'City', 'State'])
+        return df
+    except Exception as e:
+        # 読み込みエラー時は空のデータフレームを返す（アプリを止めない）
+        st.error(f"シート '{sheet_name}' の読み込みに失敗しました。設定を確認してください。")
+        if sheet_name == "friends":
+            return pd.DataFrame(columns=['名前', '持ちハンディ', '写真'])
+        return pd.DataFrame()
 
 def save_data(df, sheet_name):
     conn.update(worksheet=sheet_name, data=df)
@@ -130,3 +147,4 @@ edited_h = st.data_editor(h_df, num_rows="dynamic", use_container_width=True)
 if st.button("履歴をスプレッドシートへ反映"):
     save_data(edited_h, "history")
     st.rerun()
+
