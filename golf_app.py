@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
+import os
 
 # --- 1. デザイン設定 (視認性重視のグリーン＆縁取り文字) ---
 st.set_page_config(page_title="Golf Battle Tracker", page_icon="⛳️", layout="wide")
@@ -31,7 +32,10 @@ def load_data(sheet_name, key_col):
     try:
         df = conn.read(worksheet=sheet_name, ttl="0s")
         if df is not None and not df.empty:
-            df = df.dropna(subset=[key_col]) # 空行を削除
+            df = df.dropna(subset=[key_col])
+            # 日付列がある場合は型変換
+            if '日付' in df.columns:
+                df['日付'] = pd.to_datetime(df['日付']).dt.strftime('%Y-%m-%d')
             return df
         return pd.DataFrame()
     except:
@@ -53,34 +57,54 @@ c_df = load_data("courses", "Name")
 
 st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
-# --- 3. メイン：通算成績（友達リスト） ---
+# --- 3. 年別の集計設定 ---
+st.subheader("📅 年度別・通算成績")
+if not h_df.empty:
+    # 履歴から存在する「年」を抽出
+    h_df['Year'] = pd.to_datetime(h_df['日付']).dt.year
+    available_years = sorted(h_df['Year'].unique(), reverse=True)
+    current_year = date.today().year
+    
+    # 今年のデータがなくても選択肢に含める
+    if current_year not in available_years:
+        available_years = [current_year] + available_years
+    
+    selected_year = st.selectbox("集計対象の年を選択してください", options=available_years, index=0)
+    
+    # 選択された年でフィルタリング
+    h_df_yearly = h_df[h_df['Year'] == selected_year]
+else:
+    selected_year = date.today().year
+    h_df_yearly = pd.DataFrame()
+
+# --- 4. メイン：通算成績（友達リスト） ---
 if not f_df.empty:
-    st.subheader("📈 通算成績（グロス勝負）")
     cols = st.columns(len(f_df))
     for i, (idx, row) in enumerate(f_df.iterrows()):
         with cols[i]:
             name = str(row['名前'])
-            stats = h_df[h_df['対戦相手'] == name] if not h_df.empty else pd.DataFrame()
+            stats = h_df_yearly[h_df_yearly['対戦相手'] == name] if not h_df_yearly.empty else pd.DataFrame()
             w = (stats['勝敗'] == "勝ち").sum()
             l = (stats['勝敗'] == "負け").sum()
             
-            # 写真の表示 (URLまたはパスがある場合)
+            # 写真の表示
             if '写真' in row and pd.notnull(row['写真']) and str(row['写真']) != "":
                 st.image(row['写真'], width=120)
             else:
                 st.write("📷 No Photo")
             
-            st.metric(label=name, value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
+            st.metric(label=f"{name} ({selected_year})", value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
 
-# --- 4. ラウンド結果入力 ---
+# --- 5. ラウンド結果入力 ---
 st.divider()
-with st.expander("📝 ラウンド結果を入力"):
+with st.expander("📝 ラウンド結果を記録する"):
     if not f_df.empty and not c_df.empty:
         col1, col2 = st.columns(2)
         with col1:
             p_date = st.date_input("日付", date.today())
-            c_list = c_df['Name'] + " (" + c_df['City'].fillna('') + ")"
-            course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_list.tolist()))
+            # 州を含めたコース表示
+            c_df['Display'] = c_df['Name'] + " (" + c_df['City'].fillna('') + ", " + c_df['State'].fillna('') + ")"
+            course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_df['Display'].tolist()))
         with col2:
             opps = st.multiselect("対戦相手", options=f_df['名前'].tolist())
             my_gross = st.number_input("自分のスコア", 70, 150, 90)
@@ -94,53 +118,71 @@ with st.expander("📝 ラウンド結果を入力"):
                 res = cc2.selectbox(f"結果", ["勝ち", "負け", "引き分け"], key=f"r_{opp}")
                 round_results.append({"opp": opp, "score": o_score, "res": res})
             
-            if st.button("🚀 ラウンドを保存"):
+            if st.button("🚀 ラウンド結果をスプレッドシートへ保存"):
                 new_h = []
                 for r in round_results:
                     new_h.append({
                         "日付": p_date.strftime('%Y-%m-%d'), "ゴルフ場": course, "対戦相手": r["opp"],
                         "自分のスコア": my_gross, "相手のスコア": r["score"], "勝敗": r["res"], "ハンディ適用": "なし"
                     })
-                new_history_df = pd.concat([h_df, pd.DataFrame(new_h)], ignore_index=True)
-                if update_spreadsheet(new_history_df, "history"):
-                    st.success("履歴を保存しました！")
+                if update_spreadsheet(pd.concat([h_df, pd.DataFrame(new_h)], ignore_index=True), "history"):
+                    st.success("保存完了しました！")
                     st.rerun()
 
-# --- 5. 対戦履歴の表示・修正 ---
+# --- 6. 対戦履歴の確認（対戦相手ごとに表示） ---
 st.divider()
-with st.expander("📊 対戦履歴の確認・修正"):
-    if not h_df.empty:
-        # 日付順にソートして表示
-        sorted_h = h_df.sort_values(by="日付", ascending=False)
-        edited_h = st.data_editor(sorted_h, num_rows="dynamic", use_container_width=True)
-        if st.button("履歴の修正を保存"):
-            if update_spreadsheet(edited_h, "history"):
-                st.success("履歴を更新しました")
-                st.rerun()
+st.subheader("📊 対戦履歴の確認・管理")
+if not h_df.empty:
+    opp_filter = st.selectbox("特定の対戦相手で絞り込む", options=["全員表示"] + f_df['名前'].tolist())
+    
+    # フィルタリング
+    view_h_df = h_df.copy()
+    if opp_filter != "全員表示":
+        view_h_df = view_h_df[view_h_df['対戦相手'] == opp_filter]
+    
+    # 修正も可能な表を表示
+    edited_h = st.data_editor(view_h_df.sort_values(by="日付", ascending=False), num_rows="dynamic", use_container_width=True)
+    if st.button("履歴の修正内容を反映"):
+        if update_spreadsheet(edited_h, "history"):
+            st.success("履歴を更新しました")
+            st.rerun()
 
-# --- 6. サイドバー：メンテナンス (友達・コース追加) ---
+# --- 7. サイドバー：友達・コース・写真の管理 ---
 with st.sidebar:
     st.header("⚙️ メンテナンス")
     
-    with st.expander("👤 友達を追加"):
-        f_name = st.text_input("名前")
-        f_hc = st.number_input("ハンディ", value=0.0)
-        f_pic = st.text_input("写真URL (任意)")
-        if st.button("友達を保存"):
-            if f_name:
-                new_f = pd.concat([f_df, pd.DataFrame([{"名前": f_name, "持ちハンディ": f_hc, "写真": f_pic}])], ignore_index=True)
-                if update_spreadsheet(new_f, "friends"): st.rerun()
+    # 写真の追加・更新機能
+    with st.expander("👤 友達の写真・プロフィールを更新"):
+        if not f_df.empty:
+            target_friend = st.selectbox("更新する友達を選択", options=f_df['名前'].tolist())
+            uploaded_file = st.file_uploader(f"{target_friend}さんの写真をアップロード", type=['png', 'jpg', 'jpeg'])
+            
+            # 注：Streamlit Cloudで直接バイナリ保存は難しいため、通常はURLを指定
+            new_url = st.text_input("または写真URLを入力", value=f_df.loc[f_df['名前']==target_friend, '写真'].values[0])
+            
+            if st.button("写真を反映"):
+                f_df.loc[f_df['名前'] == target_friend, '写真'] = new_url
+                if update_spreadsheet(f_df, "friends"): st.success("更新しました")
+        
+        st.divider()
+        st.subheader("新規友達追加")
+        new_f_name = st.text_input("新しい名前")
+        new_f_hc = st.number_input("初期ハンディキャップ", value=0.0)
+        if st.button("新規友達を保存"):
+            if new_f_name:
+                new_row = pd.DataFrame([{"名前": new_f_name, "持ちハンディ": new_f_hc, "写真": ""}])
+                if update_spreadsheet(pd.concat([f_df, new_row], ignore_index=True), "friends"): st.rerun()
 
-    with st.expander("⛳️ ゴルフ場を追加"):
-        c_name = st.text_input("コース名")
-        c_city = st.text_input("City", value="Costa Mesa")
+    with st.expander("⛳️ ゴルフ場を追加 (州を含める)"):
+        c_name = st.text_input("コース名 (例: Oak Creek GC)")
+        c_city = st.text_input("City", value="Irvine")
+        c_state = st.text_input("State", value="CA") # 州入力を追加
         if st.button("コースを保存"):
             if c_name:
-                new_c = pd.concat([c_df, pd.DataFrame([{"Name": c_name, "City": c_city, "State": "CA"}])], ignore_index=True)
-                if update_spreadsheet(new_c, "courses"): st.rerun()
+                new_course_row = pd.DataFrame([{"Name": c_name, "City": c_city, "State": c_state}])
+                if update_spreadsheet(pd.concat([c_df, new_course_row], ignore_index=True), "courses"): st.rerun()
 
     st.divider()
-    if st.button("最新データに更新"):
+    if st.button("🔄 最新データに強制更新"):
         st.cache_data.clear()
         st.rerun()
-
