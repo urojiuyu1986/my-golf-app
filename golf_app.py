@@ -3,7 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
 
-# --- 1. デザイン設定 (縁取り文字・グリーン背景の復活) ---
+# --- 1. デザイン設定 (視認性・縁取り文字の維持) ---
 st.set_page_config(page_title="Golf Battle Tracker", page_icon="⛳️", layout="wide")
 st.markdown("""
     <style>
@@ -23,77 +23,72 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. GSheets接続とデータクリーニング ---
+# --- 2. Googleスプレッドシート連携とデータクリーニング ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_data(sheet_name, key_col):
+def load_cleaned_data(sheet_name, key_column):
     try:
+        # スプレッドシートから読み込み
         df = conn.read(worksheet=sheet_name, ttl="0s")
         if df is not None and not df.empty:
-            # 【TypeError対策】名前や日付が空（NaN/None）の行を完全に削除
-            df = df.dropna(subset=[key_col])
-            # 文字列として扱う
-            df[key_col] = df[key_col].astype(str)
+            # 名前や日付が入っていない「空の行」を完全に削除する
+            df = df.dropna(subset=[key_column])
+            # データの型を整理（名前は文字列、スコアは数値など）
+            df[key_column] = df[key_column].astype(str).str.strip()
             return df
         return pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        # 読み込み失敗時は空の表を返す
         return pd.DataFrame()
 
-# データの読み込み (各シートの主キーを指定して空行を排除)
-f_df = load_data("friends", "名前")
-h_df = load_data("history", "日付")
-c_df = load_data("courses", "Name")
+# データの読み込み（friendsは'名前'、historyは'日付'、coursesは'Name'を基準に空行を削除）
+f_df = load_cleaned_data("friends", "名前")
+h_df = load_cleaned_data("history", "日付")
+c_df = load_cleaned_data("courses", "Name")
 
 st.title("⛳️ GOLF BATTLE TRACKER PRO")
 
 # --- 3. メイン：通算成績表示 ---
 if not f_df.empty:
     st.subheader("📈 通算成績（グロス勝負）")
-    # 友達の人数に合わせて列を作成
+    # 登録されている人数に合わせて横並びに表示
     cols = st.columns(len(f_df))
     for i, (idx, row) in enumerate(f_df.iterrows()):
         with cols[i]:
-            name = str(row['名前'])
-            # 履歴からこの人の戦績を計算
+            name = row['名前']
+            # historyからこの人の戦績を計算
             stats = h_df[h_df['対戦相手'] == name] if not h_df.empty else pd.DataFrame()
-            w = (stats['勝敗'] == "勝ち").sum()
-            l = (stats['勝敗'] == "負け").sum()
+            wins = (stats['勝敗'] == "勝ち").sum()
+            losses = (stats['勝敗'] == "負け").sum()
             
-            st.metric(label=name, value=f"{w}勝 {l}敗", delta=f"HC: {row['持ちハンディ']}")
-            st.write("📷 No Photo") # 写真機能は今後実装可能
+            # 視覚的なカード表示
+            st.metric(label=name, value=f"{wins}勝 {losses}敗", delta=f"HC: {row['持ちハンディ']}")
+            st.write("📷 No Photo")
 else:
-    st.info("スプレッドシートから友達データが読み込めませんでした。")
+    st.info("スプレッドシートの 'friends' シートにデータが見つかりません。")
 
-# --- 4. ラウンド結果入力 (以前の多機能フォーム) ---
+# --- 4. ラウンド結果入力 ---
 st.divider()
 with st.expander("📝 ラウンド結果を入力"):
     if not f_df.empty and not c_df.empty:
         col1, col2 = st.columns(2)
         with col1:
-            p_date = st.date_input("日付", date.today())
-            c_list = c_df['Name'] + " (" + c_df['City'].fillna('') + ")"
-            course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(c_list.tolist()))
+            play_date = st.date_input("日付", date.today())
+            # コースリストの作成 (Rancho San Joaquin 等)
+            course_options = (c_df['Name'] + " (" + c_df['City'].fillna('') + ")").tolist()
+            selected_course = st.selectbox("コースを選択", options=["-- 選択 --"] + sorted(course_options))
         with col2:
-            opps = st.multiselect("対戦相手", options=f_df['名前'].tolist())
-            score = st.number_input("自分のスコア", 70, 150, 90)
+            selected_opps = st.multiselect("対戦相手", options=f_df['名前'].tolist())
+            my_score = st.number_input("自分のスコア", 70, 150, 90)
         
-        if st.button("🚀 保存"):
-            st.warning("現在、読み込みテスト完了のため保存機能は停止しています。")
+        if st.button("🚀 保存（テスト中）"):
+            st.warning("現在読み込みを優先して確認中です。")
     else:
-        st.warning("friendsシートまたはcoursesシートにデータがありません。")
+        st.warning("ゴルフ場データ、または友達データが不足しています。")
 
-# --- 5. サイドバー：メンテナンス機能 ---
+# --- 5. サイドバー：最新化ボタン ---
 with st.sidebar:
-    st.header("⚙️ メンテナンス")
-    with st.expander("👤 友達・HC管理"):
-        if not f_df.empty:
-            st.data_editor(f_df[['名前', '持ちハンディ']], use_container_width=True, key="f_editor")
-    
-    with st.expander("⛳️ ゴルフ場を追加"):
-        if not c_df.empty:
-            st.data_editor(c_df[['Name', 'City']], use_container_width=True, key="c_editor")
-            
-    st.divider()
-    if st.button("最新データを取得（再起動）"):
+    st.header("⚙️ システム")
+    if st.button("最新データに更新"):
         st.cache_data.clear()
         st.rerun()
